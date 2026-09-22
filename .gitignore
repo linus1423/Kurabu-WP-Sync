@@ -1,0 +1,17 @@
+# Dependencies
+/vendor/
+/node_modules/
+
+# Build output
+/languages/*.mo
+/dist/
+
+# Tooling
+.phpunit.result.cache
+/.phpcs.cache
+
+# Editors / OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
