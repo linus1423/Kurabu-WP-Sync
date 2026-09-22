@@ -21,5 +21,6 @@ require_once KURABU_WP_SYNC_DIR . 'includes/Autoloader.php';
 
 \Kurabu\WPSync\Database\Schema::drop();
 \Kurabu\WPSync\Support\Settings::delete();
+\Kurabu\WPSync\Template\TemplateStore::delete_option();
 
 wp_clear_scheduled_hook( \Kurabu\WPSync\Plugin::CRON_HOOK );
