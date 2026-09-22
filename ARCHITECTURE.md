@@ -118,7 +118,7 @@ Solange die KURABU-Doku fehlt, sind Endpunkte, Auth-Methode, Paginierung und
 Feldnamen bewusst Einstellungen und keine Konstanten: eine falsche Annahme wird
 im Backend unter „Mapping" korrigiert, nicht im Code.
 
-### Shortcodes (`includes/Shortcode/`, noch leer)
+### Shortcodes (`includes/Shortcode/`)
 
 Entscheiden, **welche** Daten auf einer Seite erscheinen: `[kurabu_department]`,
 `[kurabu_training]`, `[kurabu_trainings]` samt Parametern. Sie lesen
@@ -127,7 +127,29 @@ ausschließlich aus den Repositories.
 `AbstractRepository::find_by_reference()` löst dabei sowohl
 `id="12345"` (KURABU-ID) als auch `id="turnen"` (Slug) auf.
 
-### Template-Engine (`includes/Template/`, noch leer)
+`ShortcodeManager::bootstrap()` hängt die Schicht in
+`kurabu_wp_sync_booted`; registriert wird sie erst dort, nicht im Container.
+
+Der Weg eines Aufrufs:
+
+1. `AbstractShortcode::render()` normalisiert die Parameter und fragt den
+   `RenderCache`.
+2. Der jeweilige Shortcode wählt die Datensätze über die Repositories aus.
+3. Der `ContextBuilder` liest die verbundenen Datensätze (Gruppe, Abteilung,
+   Trainingsort, Trainingszeiten) und baut daraus die fertigen Werte.
+4. `Template\Renderer` macht daraus HTML.
+
+Der `ContextBuilder` gehört bewusst hierher und nicht in die Template-Engine:
+Er ist der Teil, der Datensätze liest. Die Engine bekommt nur noch Werte.
+
+Der `RenderCache` legt fertiges HTML in einem Transient ab. Der Schlüssel
+enthält die Vorlagen-Revision und den jüngsten erfolgreichen Sync-Zeitpunkt,
+deshalb entwertet sich ein Eintrag von selbst, sobald eine Vorlage gespeichert
+oder ein Lauf abgeschlossen wurde. Wer Vorlagen bearbeiten darf, umgeht den
+Zwischenspeicher. `kurabu_wp_sync_shortcode_cache_ttl` stellt die Lebensdauer
+ein, `0` schaltet ihn ab.
+
+### Template-Engine (`includes/Template/`)
 
 Bestimmt, **wie** ein Training oder eine Abteilung aussieht. Die im Backend
 gespeicherte Vorlage wird zentral abgelegt und von allen Shortcodes verwendet.
@@ -137,6 +159,30 @@ zuerst gegen die Spalten auf und fällt danach auf den rohen KURABU-`payload`
 zurück. Dadurch kann der Vorlagen-Baukasten auch KURABU-Felder anbieten, die
 das Schema nicht ausdrücklich abbildet, ohne dass dafür eine Migration nötig
 ist.
+
+| Klasse | Aufgabe |
+| --- | --- |
+| `Element` | ein Element einer Vorlage: Feld oder Layout, plus Optionen |
+| `Template` | eine benannte Vorlage: Typ, Name, Elemente in Reihenfolge |
+| `TemplateStore` | zentrale Ablage in der Option `kurabu_wp_sync_templates` |
+| `DefaultTemplates` | die mitgelieferten Vorlagen |
+| `FieldRegistry` | welche KURABU-Felder und Layout-Elemente es gibt |
+| `Renderer` | Vorlage plus Kontext ergibt HTML |
+| `SampleData` | Beispieldaten für die Vorschau im Backend |
+| `Assets` | das Stylesheet, nur wo ein Shortcode ausgegeben wurde |
+
+Der Renderer bekommt einen Kontext mit zwei Teilen: `values` (Feldwerte) und
+`blocks` (bereits gerendertes HTML, etwa die Trainings einer Abteilung). Er
+fragt nichts nach und liest nichts; er entscheidet ausschließlich über die
+Darstellung.
+
+Nicht gespeicherte Vorlagen kommen aus `DefaultTemplates`. Gespeichert wird
+erst, wenn jemand im Backend etwas ändert; das Löschen einer mitgelieferten
+Vorlage stellt deshalb den Auslieferungszustand wieder her.
+
+Erweitert wird über Filter statt über Änderungen an diesen Klassen:
+`kurabu_wp_sync_template_fields` meldet ein Feld an,
+`kurabu_wp_sync_template_values` füllt es.
 
 ### Backend (`includes/Admin/`)
 
@@ -153,8 +199,21 @@ Das Menü „KURABU" und seine Screens. Neue Screens werden über den Filter
 | `kurabu_wp_sync_settings_saved` | Einstellungen geändert, Cron neu planen |
 | `kurabu_wp_sync_admin_pages` | Backend-Screens ergänzen |
 | `kurabu_wp_sync_run_finished` | ein Lauf ist durch, bekommt den `RunReport` |
+| `kurabu_wp_sync_templates_saved` | eine Vorlage wurde angelegt, geändert oder gelöscht |
 
-Dazu die Filter der Sync-Schicht: `kurabu_wp_sync_field_definition` (Feldnamen),
-`kurabu_wp_sync_query_args` (Query-Parameter), `kurabu_wp_sync_handlers`
-(Datenarten), `kurabu_wp_sync_calendar_adapters` (weitere Kalender) und
-`kurabu_wp_sync_full_sync_interval` (Abstand zweier vollständiger Läufe).
+| Filter | Zweck |
+| --- | --- |
+| `kurabu_wp_sync_field_definition` | wie KURABU seine Felder benennt |
+| `kurabu_wp_sync_query_args` | Query-Parameter einer Abfrage |
+| `kurabu_wp_sync_handlers` | Datenarten ergänzen oder ersetzen |
+| `kurabu_wp_sync_calendar_adapters` | weitere Kalender-Plugins anbinden |
+| `kurabu_wp_sync_full_sync_interval` | Abstand zweier vollständiger Läufe |
+| `kurabu_wp_sync_template_fields` | zusätzliche KURABU-Felder im Baukasten |
+| `kurabu_wp_sync_template_values` | Werte für die Darstellung ergänzen |
+| `kurabu_wp_sync_templates` | Vorlagen ergänzen oder ersetzen |
+| `kurabu_wp_sync_shortcodes` | weitere Shortcodes registrieren |
+| `kurabu_wp_sync_shortcode_cache_ttl` | Lebensdauer des Zwischenspeichers |
+| `kurabu_wp_sync_department_news` | News einer Abteilung beisteuern |
+| `kurabu_wp_sync_department_events` | Termine einer Abteilung beisteuern |
+| `kurabu_wp_sync_rendered_template` | fertiges HTML einer Vorlage nachbearbeiten |
+| `kurabu_wp_sync_element_classes` | CSS-Klassen eines Elements anpassen |

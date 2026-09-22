@@ -30,6 +30,11 @@ require_once KURABU_WP_SYNC_DIR . 'includes/Autoloader.php';
 
 Autoloader::register();
 
+// Sync engine and display layer hook themselves into kurabu_wp_sync_booted, so
+// both have to be listening before the container boots.
+Sync\Engine::bootstrap();
+Shortcode\ShortcodeManager::bootstrap();
+
 register_activation_hook( __FILE__, array( Activator::class, 'activate' ) );
 register_deactivation_hook( __FILE__, array( Deactivator::class, 'deactivate' ) );
 
@@ -42,9 +47,5 @@ register_deactivation_hook( __FILE__, array( Deactivator::class, 'deactivate' ) 
 function plugin(): Plugin {
 	return Plugin::instance();
 }
-
-// The sync engine listens on `kurabu_wp_sync_booted`, so it registers itself
-// before the container fires that action.
-Sync\Engine::bootstrap();
 
 plugin()->boot();
