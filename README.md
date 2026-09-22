@@ -11,7 +11,8 @@ wenn KURABU vorübergehend nicht erreichbar ist.
 
 ## Stand
 
-Das Fundament steht: Grundgerüst, lokales Datenmodell und Backend-Skelett.
+Fundament und Synchronisation stehen; die Darstellung über Shortcodes fehlt
+noch.
 
 | Bereich | Stand |
 | --- | --- |
@@ -19,7 +20,7 @@ Das Fundament steht: Grundgerüst, lokales Datenmodell und Backend-Skelett.
 | Lokales Datenmodell und Repositories | vorhanden |
 | Einstellungen (API-Zugang, Intervall) | vorhanden |
 | Backend-Menü „KURABU" | vorhanden, teils Platzhalter |
-| Sync-Engine (KURABU-API, Cron) | offen |
+| Sync-Engine (KURABU-API, Cron) | vorhanden |
 | Shortcodes und Vorlagen-Baukasten | offen |
 
 ## Synchronisierte Daten
@@ -28,6 +29,42 @@ Abteilungen/Sportarten, Teams/Trainingsgruppen, Trainings, Trainingszeiten und
 Trainingsorte liegen im lokalen Cache. News werden zu WordPress-Beiträgen,
 Events wandern in den Vereinskalender; beide werden über ihre stabile KURABU-ID
 wiedererkannt und aktualisiert statt doppelt angelegt.
+
+## Synchronisation
+
+Das Intervall wird unter **KURABU → API-Konfiguration** gesetzt: 5, 15 oder 30
+Minuten, 1, 2, 6 oder 24 Stunden. Unter **KURABU → Synchronisation** lässt sich
+zusätzlich jederzeit manuell synchronisieren — entweder direkt oder im
+Hintergrund, was bei vielen Datensätzen der sichere Weg ist. Dort wird auch
+gewählt, welche Datenarten überhaupt laufen.
+
+Wo die API es unterstützt, fragt ein Lauf nur die seit dem letzten Erfolg
+geänderten Daten ab. Mindestens einmal täglich läuft trotzdem ein vollständiger
+Lauf, denn nur er sieht die Gesamtliste und erkennt, was in KURABU gelöscht
+wurde.
+
+Schlägt ein Abruf fehl, bleibt der zuletzt erfolgreiche Datenbestand
+unverändert: der Zeitstempel des letzten Erfolgs wird nicht fortgeschrieben, der
+nächste Lauf holt denselben Zeitraum erneut. Ein Fehler betrifft immer nur seine
+Datenart, die übrigen laufen weiter. Was passiert ist, steht unter
+**Synchronisationsstatus** und **Fehlerprotokoll**.
+
+### Anpassung an die KURABU-API
+
+Die API-Dokumentation liegt noch nicht vor. Deshalb sind Endpunkte,
+Auth-Methode, Paginierung und Feldnamen Einstellungen und keine festen Werte:
+
+- **API-Konfiguration** wählt die Auth-Methode (Bearer-Token, API-Key im Header
+  oder als Query-Parameter, Basic Auth).
+- **Mapping** setzt je Datenart den Endpunkt-Pfad und, wo nötig, den exakten
+  KURABU-Feldnamen je Feld. Ohne Angabe werden mehrere übliche Schreibweisen
+  der Reihe nach probiert; ein Punkt greift in verschachtelte Werte, etwa
+  `location.name`.
+- **Verbindung testen** auf der Seite *Synchronisation* ruft einen Endpunkt
+  einmal auf und zeigt die gelieferten Feldnamen. Damit lässt sich das Mapping
+  ohne Raten einstellen.
+- **Kalenderintegration** wählt, wohin die Events geschrieben werden: The Events
+  Calendar oder ein frei wählbarer Beitragstyp mit benannten Custom Fields.
 
 ## Installation
 

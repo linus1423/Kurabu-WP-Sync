@@ -43,4 +43,8 @@ function plugin(): Plugin {
 	return Plugin::instance();
 }
 
+// The sync engine listens on `kurabu_wp_sync_booted`, so it registers itself
+// before the container fires that action.
+Sync\Engine::bootstrap();
+
 plugin()->boot();

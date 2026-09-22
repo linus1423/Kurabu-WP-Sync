@@ -52,11 +52,48 @@ final class Settings {
 	 */
 	public static function defaults(): array {
 		return array(
-			'api_base_url'    => '',
-			'api_token'       => '',
-			'sync_interval'   => '1h',
-			'sync_enabled'    => true,
-			'calendar_target' => '',
+			// API-Konfiguration.
+			'api_base_url'        => '',
+			'api_token'           => '',
+			'auth_method'         => 'bearer',
+			'auth_parameter'      => '',
+			'request_timeout'     => 20,
+
+			// Synchronisation.
+			'sync_interval'       => '1h',
+			'sync_enabled'        => true,
+			// Literal keys, not Sync\Resource constants: the sync engine reads
+			// these settings, not the other way round.
+			'resources'           => array(
+				'departments',
+				'teams',
+				'locations',
+				'trainings',
+				'training_times',
+				'news',
+				'events',
+			),
+			'log_retention_days'  => 30,
+
+			// How the resource endpoints are queried.
+			'incremental'         => true,
+			'since_param'         => 'modified_since',
+			'page_param'          => 'page',
+			'per_page_param'      => 'per_page',
+			'per_page'            => 100,
+
+			// Where news are written.
+			'news_post_type'      => 'post',
+			'news_post_status'    => 'publish',
+			'news_category'       => 0,
+			'news_author'         => 0,
+
+			// Where events are written.
+			'calendar_target'     => '',
+			'event_post_type'     => '',
+			'event_meta_start'    => '_kurabu_event_start',
+			'event_meta_end'      => '_kurabu_event_end',
+			'event_meta_location' => '_kurabu_event_location',
 		);
 	}
 

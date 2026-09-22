@@ -11,6 +11,7 @@ namespace Kurabu\WPSync\Admin\Pages;
 
 use Kurabu\WPSync\Plugin;
 use Kurabu\WPSync\Support\Settings;
+use Kurabu\WPSync\Sync\Auth\AuthenticatorFactory;
 
 defined( 'ABSPATH' ) || exit;
 
@@ -46,13 +47,20 @@ final class SettingsPage extends AbstractPage {
 		check_admin_referer( self::NONCE );
 
 		$values = array(
-			'api_base_url'  => esc_url_raw( wp_unslash( $_POST['api_base_url'] ?? '' ) ),
-			'sync_interval' => sanitize_text_field( wp_unslash( $_POST['sync_interval'] ?? '1h' ) ),
-			'sync_enabled'  => isset( $_POST['sync_enabled'] ),
+			'api_base_url'    => esc_url_raw( wp_unslash( $_POST['api_base_url'] ?? '' ) ),
+			'sync_interval'   => sanitize_text_field( wp_unslash( $_POST['sync_interval'] ?? '1h' ) ),
+			'sync_enabled'    => isset( $_POST['sync_enabled'] ),
+			'auth_method'     => sanitize_key( wp_unslash( $_POST['auth_method'] ?? 'bearer' ) ),
+			'auth_parameter'  => sanitize_text_field( wp_unslash( $_POST['auth_parameter'] ?? '' ) ),
+			'request_timeout' => max( 5, min( 120, (int) ( $_POST['request_timeout'] ?? 20 ) ) ),
 		);
 
 		if ( ! isset( Settings::INTERVALS[ $values['sync_interval'] ] ) ) {
 			$values['sync_interval'] = '1h';
+		}
+
+		if ( ! AuthenticatorFactory::is_valid( (string) $values['auth_method'] ) ) {
+			$values['auth_method'] = 'bearer';
 		}
 
 		// An empty token field keeps the stored token instead of clearing it.
@@ -135,6 +143,39 @@ final class SettingsPage extends AbstractPage {
 		}
 
 		echo '</select></td></tr>';
+
+		echo '<tr><th scope="row"><label for="auth_method">' . esc_html__( 'Auth-Methode', 'kurabu-wp-sync' ) . '</label></th><td>';
+		echo '<select name="auth_method" id="auth_method">';
+
+		foreach ( AuthenticatorFactory::labels() as $method => $label ) {
+			printf(
+				'<option value="%s" %s>%s</option>',
+				esc_attr( $method ),
+				selected( $settings['auth_method'], $method, false ),
+				esc_html( $label )
+			);
+		}
+
+		echo '</select><p class="description">'
+			. esc_html__( 'Wie der Token an die KURABU-API übergeben wird.', 'kurabu-wp-sync' )
+			. '</p></td></tr>';
+
+		printf(
+			'<tr><th scope="row"><label for="auth_parameter">%s</label></th><td>'
+			. '<input name="auth_parameter" id="auth_parameter" type="text" class="regular-text code" value="%s" placeholder="X-API-Key">'
+			. '<p class="description">%s</p></td></tr>',
+			esc_html__( 'Header bzw. Parameter', 'kurabu-wp-sync' ),
+			esc_attr( (string) $settings['auth_parameter'] ),
+			esc_html__( 'Nur für "API-Key im Header" und "API-Key als Query-Parameter". Leer lassen für X-API-Key bzw. api_key.', 'kurabu-wp-sync' )
+		);
+
+		printf(
+			'<tr><th scope="row"><label for="request_timeout">%s</label></th><td>'
+			. '<input name="request_timeout" id="request_timeout" type="number" min="5" max="120" class="small-text" value="%s"> %s</td></tr>',
+			esc_html__( 'Zeitlimit je Anfrage', 'kurabu-wp-sync' ),
+			esc_attr( (string) $settings['request_timeout'] ),
+			esc_html__( 'Sekunden', 'kurabu-wp-sync' )
+		);
 
 		printf(
 			'<tr><th scope="row">%s</th><td><label><input type="checkbox" name="sync_enabled" %s> %s</label></td></tr>',
