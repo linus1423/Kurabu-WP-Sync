@@ -71,27 +71,52 @@ Dazu zwei Helfer ohne eigenes Repository:
 - `Database\SyncState` hält je Datenart fest, wann zuletzt erfolgreich
   synchronisiert wurde. Das ist die Grundlage für inkrementelle Läufe.
 
-### Sync-Engine (`includes/Sync/`, noch leer)
+### Sync-Engine (`includes/Sync/`)
 
 Holt die Daten aus der KURABU-API und schreibt sie über die Repositories in den
-Cache. Sie benutzt:
+Cache. `Engine::bootstrap()` hängt sich in `kurabu_wp_sync_booted` ein und
+registriert von dort die Cron-Schedules und den Cron-Handler.
 
-- `Support\Settings` für Basis-URL, Token und Intervall. Die Engine liest diese
-  Werte nur; geschrieben werden sie im Backend.
-- `Plugin::CRON_HOOK` (`kurabu_wp_sync_run`) als Cron-Hook. Die erlaubten
-  Intervalle stehen in `Settings::INTERVALS`; passende WP-Cron-Schedules
-  registriert die Engine daraus.
-- `SyncState::last_success()` als Startpunkt für „nur Geändertes".
+Die Schicht ist von außen nach innen gebaut:
+
+| Baustein | Aufgabe |
+| --- | --- |
+| `Transport\Transport` | spricht HTTP, sonst nichts. `HttpTransport` nutzt `wp_remote_request()` und wiederholt einen Transportfehler begrenzt. |
+| `Auth\Authenticator` | hängt den Token an. Bearer, API-Key im Header, Query-Parameter, Basic oder gar nichts — ausgewählt über die Einstellung `auth_method`. |
+| `Client` | kennt Endpunkte, Paginierung und das Antwort-Envelope und liefert rohe KURABU-Datensätze. Kennt die Datenbank nicht. |
+| `Mapping\Definition` | die einzige Stelle, die weiß, wie KURABU seine Felder benennt: je Zielfeld ein Typ und mehrere Kandidatennamen. |
+| `Mapping\FieldMap` | im Backend gesetzte Endpunkte und Feldnamen; sie gewinnen über die Kandidaten. |
+| `Mapping\RecordMapper` | liest die Felder aus einem Datensatz und normalisiert sie (Datum, Uhrzeit, Wochentag, verschachtelte Werte über `location.name`). |
+| `Handler\Handler` | ein Handler je Datenart. Ein Fehler bleibt dadurch lokal. |
+| `Calendar\CalendarAdapter` | schreibt Events in den Kalender, den die Website einsetzt. |
+| `Engine` | plant, sperrt, protokolliert und fasst den Lauf zusammen. |
+
+Dabei gilt:
+
+- `Support\Settings` liefert Basis-URL, Token, Intervall, Auth-Methode und die
+  Abfrage-Parameter. Die Engine liest diese Werte nur; geschrieben werden sie im
+  Backend.
+- `Plugin::CRON_HOOK` (`kurabu_wp_sync_run`) ist der Cron-Hook. `Scheduler`
+  registriert aus `Settings::INTERVALS` je Intervall ein WP-Cron-Schedule und
+  plant nur um, wenn sich das Intervall wirklich geändert hat.
+- `SyncState::last_success()` ist der Startpunkt für „nur Geändertes".
   `mark_error()` lässt `last_success_at` bewusst unangetastet, damit ein
   fehlgeschlagener Lauf denselben Zeitraum erneut versucht und der zuletzt
   erfolgreiche Datenbestand erhalten bleibt.
-- `Support\Logger` für das Fehlerprotokoll. Ein `Logger` pro Lauf, damit alle
-  Einträge eines Laufs dieselbe `run_id` tragen.
-- `AbstractRepository::prune()` zum Entfernen verschwundener Datensätze. Eine
-  leere Liste löscht nichts, damit ein API-Fehler den Cache nicht leeren kann.
+- `Support\Logger` schreibt das Fehlerprotokoll. Ein `Logger` pro Lauf, damit
+  alle Einträge eines Laufs dieselbe `run_id` tragen.
+- `AbstractRepository::prune()` entfernt verschwundene Datensätze — aber nur
+  nach einem vollständigen Lauf. Ein inkrementeller Lauf kennt die Gesamtliste
+  nicht und darf deshalb nichts löschen; deswegen läuft mindestens einmal
+  täglich ein vollständiger Lauf.
+- `Lock` verhindert, dass sich zwei Läufe überschneiden.
 
 Einstiegspunkte: die Actions `kurabu_wp_sync_booted`,
 `kurabu_wp_sync_activated` und `kurabu_wp_sync_settings_saved`.
+
+Solange die KURABU-Doku fehlt, sind Endpunkte, Auth-Methode, Paginierung und
+Feldnamen bewusst Einstellungen und keine Konstanten: eine falsche Annahme wird
+im Backend unter „Mapping" korrigiert, nicht im Code.
 
 ### Shortcodes (`includes/Shortcode/`)
 
@@ -173,10 +198,16 @@ Das Menü „KURABU" und seine Screens. Neue Screens werden über den Filter
 | `kurabu_wp_sync_deactivated` | geplante Läufe wurden entfernt |
 | `kurabu_wp_sync_settings_saved` | Einstellungen geändert, Cron neu planen |
 | `kurabu_wp_sync_admin_pages` | Backend-Screens ergänzen |
+| `kurabu_wp_sync_run_finished` | ein Lauf ist durch, bekommt den `RunReport` |
 | `kurabu_wp_sync_templates_saved` | eine Vorlage wurde angelegt, geändert oder gelöscht |
 
 | Filter | Zweck |
 | --- | --- |
+| `kurabu_wp_sync_field_definition` | wie KURABU seine Felder benennt |
+| `kurabu_wp_sync_query_args` | Query-Parameter einer Abfrage |
+| `kurabu_wp_sync_handlers` | Datenarten ergänzen oder ersetzen |
+| `kurabu_wp_sync_calendar_adapters` | weitere Kalender-Plugins anbinden |
+| `kurabu_wp_sync_full_sync_interval` | Abstand zweier vollständiger Läufe |
 | `kurabu_wp_sync_template_fields` | zusätzliche KURABU-Felder im Baukasten |
 | `kurabu_wp_sync_template_values` | Werte für die Darstellung ergänzen |
 | `kurabu_wp_sync_templates` | Vorlagen ergänzen oder ersetzen |

@@ -148,8 +148,11 @@ final class Logger {
 	public static function purge_older_than( int $days ): int {
 		global $wpdb;
 
-		$table  = Schema::table( Schema::SYNC_LOG );
-		$cutoff = gmdate( 'Y-m-d H:i:s', time() - ( max( 1, $days ) * DAY_IN_SECONDS ) );
+		$table = Schema::table( Schema::SYNC_LOG );
+
+		// Entries are written with current_time( 'mysql' ), so the cut-off has
+		// to be in site local time as well.
+		$cutoff = (string) wp_date( 'Y-m-d H:i:s', time() - ( max( 1, $days ) * DAY_IN_SECONDS ) );
 
 		// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.DirectDatabaseQuery.NoCaching
 		return (int) $wpdb->query( $wpdb->prepare( "DELETE FROM {$table} WHERE created_at < %s", $cutoff ) );
