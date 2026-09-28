@@ -16,11 +16,13 @@ defined( 'ABSPATH' ) || exit;
 /**
  * The single place that knows how KURABU names things.
  *
- * Every target field lists candidate KURABU field names instead of one fixed
- * name: the first candidate present in a record wins. That keeps the sync
- * working across the German and English spellings an API may use, and the
- * "Mapping" backend screen can pin an exact name per field once the KURABU
- * documentation is at hand. Dots address nested values, e.g. `location.id`.
+ * The first candidate of every field is the name the KURABU public API
+ * documents; the ones behind it are the spellings a differently configured or
+ * a future version of the API might use. The first candidate present in a
+ * record wins, and the "Mapping" backend screen can pin an exact name per
+ * field. Dots address nested values, e.g. `address.city`.
+ *
+ * @link https://tv1848coburg.kurabu.com/api/public/v1/docs
  */
 final class Definition {
 
@@ -47,22 +49,95 @@ final class Definition {
 	/**
 	 * The default endpoint path per resource, relative to the API base URL.
 	 *
-	 * These are informed guesses until the KURABU documentation is available;
-	 * they are meant to be corrected on the "Mapping" screen without touching
-	 * any code.
+	 * These are the paths of the KURABU public API. Trainings, Trainingszeiten
+	 * and Events share one endpoint: KURABU has no trainings resource, a
+	 * training is a recurring calendar event of a team (see CalendarEvent).
 	 *
 	 * @return array<string, string>
 	 */
 	public static function endpoints(): array {
 		return array(
-			Resource::DEPARTMENTS    => 'departments',
-			Resource::TEAMS          => 'teams',
-			Resource::LOCATIONS      => 'locations',
-			Resource::TRAININGS      => 'trainings',
-			Resource::TRAINING_TIMES => 'training-times',
-			Resource::NEWS           => 'news',
-			Resource::EVENTS         => 'events',
+			Resource::DEPARTMENTS    => 'clubs/categories',
+			Resource::TEAMS          => 'clubs/teams',
+			Resource::LOCATIONS      => 'clubs/locations',
+			Resource::TRAININGS      => 'events/calendar-events',
+			Resource::TRAINING_TIMES => 'events/calendar-events',
+			Resource::NEWS           => 'content/articles',
+			Resource::EVENTS         => 'events/calendar-events',
 		);
+	}
+
+	/**
+	 * Endpoints whose records land in the same cache table as the resource.
+	 *
+	 * KURABU knows three kinds of place: a location, a facility inside it and a
+	 * room inside that. A training references whichever one it is held in, so
+	 * all three go into the Trainingsorte cache and every reference resolves.
+	 *
+	 * @param string $resource Resource key.
+	 *
+	 * @return string[]
+	 */
+	public static function extra_endpoints( string $resource ): array {
+		$extra = array(
+			Resource::LOCATIONS => array( 'clubs/facilities', 'clubs/rooms' ),
+		);
+
+		/**
+		 * Filters the additional endpoints of a resource.
+		 *
+		 * @param string[] $endpoints Endpoint paths.
+		 * @param string   $resource  Resource key.
+		 */
+		return (array) apply_filters(
+			'kurabu_wp_sync_extra_endpoints',
+			$extra[ $resource ] ?? array(),
+			$resource
+		);
+	}
+
+	/**
+	 * The query filters that keep a resource request to public data.
+	 *
+	 * KURABU filters with LHS bracket syntax, `filter[field][operator]=value`.
+	 * A club website may only show what the club published publicly, so an
+	 * unpublished record or one visible to members only is filtered out at the
+	 * API rather than downloaded and hidden later. The "Nur öffentliche Daten"
+	 * setting switches this off for a site that wants everything.
+	 *
+	 * @param string $resource Resource key.
+	 *
+	 * @return array<string, string>
+	 */
+	public static function public_filters( string $resource ): array {
+		$published = array( 'filter[published][eq]' => 'true' );
+
+		switch ( $resource ) {
+			case Resource::NEWS:
+				// Articles have no published flag; their status carries it.
+				$filters = array(
+					'filter[status][in]' => 'PUBLISHED,FEATURED',
+				);
+				break;
+			case Resource::TEAMS:
+			case Resource::TRAININGS:
+			case Resource::TRAINING_TIMES:
+			case Resource::EVENTS:
+				// These carry a visibility on top of the published flag.
+				$filters = $published + array( 'filter[visibility][in]' => 'PUBLIC' );
+				break;
+			default:
+				$filters = $published;
+				break;
+		}
+
+		/**
+		 * Filters the query filters that restrict a request to public data.
+		 *
+		 * @param array<string, string> $filters  Query arguments.
+		 * @param string                $resource Resource key.
+		 */
+		return (array) apply_filters( 'kurabu_wp_sync_public_filters', $filters, $resource );
 	}
 
 	/**
@@ -93,7 +168,7 @@ final class Definition {
 		$name        = array( 'name', 'title', 'bezeichnung', 'titel' );
 		$slug        = array( 'slug', 'permalink', 'shortName', 'kuerzel' );
 		$description = array( 'description', 'beschreibung', 'text', 'content', 'inhalt' );
-		$image       = array( 'image', 'image_url', 'imageUrl', 'picture', 'bild', 'logo', 'image.url' );
+		$image       = array( 'image_url', 'image', 'imageUrl', 'picture', 'bild', 'logo', 'image.url' );
 		$link        = array( 'link', 'url', 'website', 'permalink' );
 		$order       = array( 'order', 'position', 'sort', 'sortOrder', 'reihenfolge' );
 
@@ -107,6 +182,8 @@ final class Definition {
 				'contact_name'  => self::field(
 					__( 'Ansprechpartner', 'kurabu-wp-sync' ),
 					self::TYPE_TEXT,
+					// KURABU splits the contact into first and last name; the
+					// handler joins them, this is the fallback for one field.
 					array( 'contact_name', 'contactName', 'contact.name', 'ansprechpartner', 'contact' )
 				),
 				'contact_email' => self::field(
@@ -125,10 +202,13 @@ final class Definition {
 
 			Resource::TEAMS          => array(
 				'kurabu_id'            => self::field( __( 'KURABU-ID', 'kurabu-wp-sync' ), self::TYPE_ID, $id ),
+				// KURABU has no category on a team: the link runs the other
+				// way, through `team_ids` of a category. TeamHandler fills this
+				// from the categories already in the cache.
 				'department_kurabu_id' => self::field(
 					__( 'Abteilung (KURABU-ID)', 'kurabu-wp-sync' ),
 					self::TYPE_ID,
-					array( 'department_id', 'departmentId', 'department.id', 'department', 'abteilung_id', 'sport_id' )
+					array( 'category_id', 'department_id', 'departmentId', 'department.id', 'abteilung_id' )
 				),
 				'name'                 => self::field( __( 'Name', 'kurabu-wp-sync' ), self::TYPE_TEXT, $name ),
 				'slug'                 => self::field( __( 'Slug', 'kurabu-wp-sync' ), self::TYPE_TEXT, $slug ),
@@ -148,17 +228,17 @@ final class Definition {
 				'street'      => self::field(
 					__( 'Straße', 'kurabu-wp-sync' ),
 					self::TYPE_TEXT,
-					array( 'street', 'strasse', 'address', 'adresse', 'address.street', 'street_address' )
+					array( 'address.street', 'street', 'strasse', 'adresse', 'street_address' )
 				),
 				'postal_code' => self::field(
 					__( 'PLZ', 'kurabu-wp-sync' ),
 					self::TYPE_TEXT,
-					array( 'postal_code', 'postalCode', 'zip', 'plz', 'address.postal_code' )
+					array( 'address.zip', 'postal_code', 'postalCode', 'zip', 'plz', 'address.postal_code' )
 				),
 				'city'        => self::field(
 					__( 'Ort', 'kurabu-wp-sync' ),
 					self::TYPE_TEXT,
-					array( 'city', 'ort', 'town', 'address.city' )
+					array( 'address.city', 'city', 'ort', 'town' )
 				),
 				'latitude'    => self::field(
 					__( 'Breitengrad', 'kurabu-wp-sync' ),
@@ -177,12 +257,14 @@ final class Definition {
 				),
 			),
 
+			// A training is a recurring calendar event of a team, so these
+			// fields are read out of an event record.
 			Resource::TRAININGS      => array(
 				'kurabu_id'            => self::field( __( 'KURABU-ID', 'kurabu-wp-sync' ), self::TYPE_ID, $id ),
 				'department_kurabu_id' => self::field(
 					__( 'Abteilung (KURABU-ID)', 'kurabu-wp-sync' ),
 					self::TYPE_ID,
-					array( 'department_id', 'departmentId', 'department.id', 'department', 'abteilung_id' )
+					array( 'category_id', 'department_id', 'departmentId', 'department.id', 'abteilung_id' )
 				),
 				'team_kurabu_id'       => self::field(
 					__( 'Team (KURABU-ID)', 'kurabu-wp-sync' ),
@@ -197,6 +279,8 @@ final class Definition {
 				'name'                 => self::field( __( 'Name', 'kurabu-wp-sync' ), self::TYPE_TEXT, $name ),
 				'slug'                 => self::field( __( 'Slug', 'kurabu-wp-sync' ), self::TYPE_TEXT, $slug ),
 				'description'          => self::field( __( 'Beschreibung', 'kurabu-wp-sync' ), self::TYPE_HTML, $description ),
+				// KURABU names them event leads; the handler joins first and
+				// last name of all of them.
 				'trainer'              => self::field(
 					__( 'Trainer', 'kurabu-wp-sync' ),
 					self::TYPE_TEXT,
@@ -252,24 +336,30 @@ final class Definition {
 				'content'              => self::field(
 					__( 'Inhalt', 'kurabu-wp-sync' ),
 					self::TYPE_HTML,
-					array( 'content', 'body', 'text', 'inhalt', 'description', 'html' )
+					array( 'body', 'content', 'text', 'inhalt', 'description', 'html' )
 				),
 				'excerpt'              => self::field(
 					__( 'Auszug', 'kurabu-wp-sync' ),
 					self::TYPE_TEXT,
-					array( 'excerpt', 'summary', 'teaser', 'anrisstext', 'kurzfassung' )
+					array( 'preview_text', 'excerpt', 'summary', 'teaser', 'anrisstext' )
 				),
 				'published_at'         => self::field(
 					__( 'Veröffentlicht am', 'kurabu-wp-sync' ),
 					self::TYPE_DATETIME,
-					array( 'published_at', 'publishedAt', 'date', 'created_at', 'createdAt', 'datum' )
+					array( 'publishing_date', 'published_at', 'publishedAt', 'date', 'created_at', 'datum' )
 				),
-				'image_url'            => self::field( __( 'Beitragsbild', 'kurabu-wp-sync' ), self::TYPE_URL, $image ),
+				'image_url'            => self::field(
+					__( 'Beitragsbild', 'kurabu-wp-sync' ),
+					self::TYPE_URL,
+					array_merge( array( 'cover_image_url' ), $image )
+				),
 				'link'                 => self::field( __( 'Link', 'kurabu-wp-sync' ), self::TYPE_URL, $link ),
+				// An article belongs to several categories; the first one is
+				// the department a post is filed under.
 				'department_kurabu_id' => self::field(
 					__( 'Abteilung (KURABU-ID)', 'kurabu-wp-sync' ),
 					self::TYPE_ID,
-					array( 'department_id', 'departmentId', 'department.id', 'abteilung_id' )
+					array( 'category_ids.0', 'category_id', 'department_id', 'department.id', 'abteilung_id' )
 				),
 			),
 
@@ -277,6 +367,9 @@ final class Definition {
 				'kurabu_id'            => self::field( __( 'KURABU-ID', 'kurabu-wp-sync' ), self::TYPE_ID, $id ),
 				'title'                => self::field( __( 'Titel', 'kurabu-wp-sync' ), self::TYPE_TEXT, $name ),
 				'description'          => self::field( __( 'Beschreibung', 'kurabu-wp-sync' ), self::TYPE_HTML, $description ),
+				// KURABU splits both into a date and a time field, so the
+				// handler assembles them; these candidates cover an API that
+				// hands out one datetime.
 				'start'                => self::field(
 					__( 'Beginn', 'kurabu-wp-sync' ),
 					self::TYPE_DATETIME,
@@ -295,7 +388,7 @@ final class Definition {
 				'location_name'        => self::field(
 					__( 'Ort (Name)', 'kurabu-wp-sync' ),
 					self::TYPE_TEXT,
-					array( 'location', 'location_name', 'locationName', 'location.name', 'venue', 'ort' )
+					array( 'location_info', 'location', 'location_name', 'location.name', 'venue', 'ort' )
 				),
 				'location_kurabu_id'   => self::field(
 					__( 'Ort (KURABU-ID)', 'kurabu-wp-sync' ),
@@ -305,7 +398,7 @@ final class Definition {
 				'department_kurabu_id' => self::field(
 					__( 'Abteilung (KURABU-ID)', 'kurabu-wp-sync' ),
 					self::TYPE_ID,
-					array( 'department_id', 'departmentId', 'department.id', 'abteilung_id' )
+					array( 'category_id', 'department_id', 'departmentId', 'department.id', 'abteilung_id' )
 				),
 				'image_url'            => self::field( __( 'Bild', 'kurabu-wp-sync' ), self::TYPE_URL, $image ),
 				'link'                 => self::field( __( 'Link', 'kurabu-wp-sync' ), self::TYPE_URL, $link ),

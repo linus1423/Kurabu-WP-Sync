@@ -12,6 +12,7 @@ namespace Kurabu\WPSync\Sync;
 use Kurabu\WPSync\Support\Settings;
 use Kurabu\WPSync\Sync\Auth\Authenticator;
 use Kurabu\WPSync\Sync\Auth\AuthenticatorFactory;
+use Kurabu\WPSync\Sync\Mapping\Definition;
 use Kurabu\WPSync\Sync\Mapping\FieldMap;
 use Kurabu\WPSync\Sync\Transport\HttpTransport;
 use Kurabu\WPSync\Sync\Transport\Response;
@@ -26,9 +27,12 @@ defined( 'ABSPATH' ) || exit;
  * comes in; it knows nothing about the local database. It hands raw records to
  * the handlers, which map and store them.
  *
- * Endpoint paths, the paging parameter names and the "changed since" parameter
- * are configuration, not constants: the KURABU documentation is not available
- * yet, so all of it is adjustable in the backend.
+ * The defaults follow the KURABU public API: `limit` and `offset` for paging,
+ * `filter[updated_at][gt]` for the incremental cut-off, records inside a `data`
+ * key and the total in `meta.pagination.total`. All of it stays configuration
+ * rather than constants, so a changed API is a setting, not a release.
+ *
+ * @link https://tv1848coburg.kurabu.com/api/public/v1/docs
  */
 final class Client {
 
@@ -43,6 +47,14 @@ final class Client {
 	private const ENVELOPE_KEYS = array( 'data', 'items', 'results', 'records', 'entries', 'content', 'elements' );
 
 	/**
+	 * The path the KURABU public API lives under.
+	 *
+	 * Appended when the configured base URL is a bare host, so pasting
+	 * `https://verein.kurabu.com` works as well as the full API URL.
+	 */
+	private const DEFAULT_API_PATH = '/api/public/v1';
+
+	/**
 	 * How the request is authenticated.
 	 */
 	private Transport $transport;
@@ -51,6 +63,17 @@ final class Client {
 	 * How the credential is attached.
 	 */
 	private Authenticator $auth;
+
+	/**
+	 * Records already fetched, keyed by request URL.
+	 *
+	 * Three resources read the same calendar endpoint, so the second and third
+	 * get the records of the first instead of asking again. The engine empties
+	 * this at the start of every run, so it never spans two runs.
+	 *
+	 * @var array<string, array<int, array<string|int, mixed>>>
+	 */
+	private array $fetched = array();
 
 	/**
 	 * @param Transport|null     $transport Transport, defaults to HTTP.
@@ -69,18 +92,33 @@ final class Client {
 	}
 
 	/**
+	 * Drops the records remembered during a run.
+	 */
+	public function forget(): void {
+		$this->fetched = array();
+	}
+
+	/**
 	 * Fetches every record of a resource, following the paging.
 	 *
 	 * @param string      $resource Resource key.
 	 * @param string|null $since    Only records changed since this MySQL
 	 *                              datetime, when the API supports it.
+	 * @param string|null $endpoint Endpoint path, when it is not the resource's
+	 *                              own one.
 	 *
 	 * @return array<int, array<string|int, mixed>> Raw KURABU records.
 	 *
 	 * @throws ApiException When the API cannot be reached or answers with a fault.
 	 */
-	public function fetch( string $resource, ?string $since = null ): array {
-		$url      = $this->endpoint_url( $resource, $since, 1 );
+	public function fetch( string $resource, ?string $since = null, ?string $endpoint = null ): array {
+		$url = $this->endpoint_url( $resource, $since, 1, $endpoint );
+		$key = md5( $url );
+
+		if ( isset( $this->fetched[ $key ] ) ) {
+			return $this->fetched[ $key ];
+		}
+
 		$per_page = $this->per_page();
 		$records  = array();
 		$seen     = array();
@@ -119,6 +157,12 @@ final class Client {
 			$seen[ $fingerprint ] = true;
 			$records              = array_merge( $records, $items );
 
+			$total = $this->total( $decoded );
+
+			if ( null !== $total && count( $records ) >= $total ) {
+				break;
+			}
+
 			$next = $this->next_url( $decoded );
 
 			if ( '' !== $next ) {
@@ -130,8 +174,10 @@ final class Client {
 				break;
 			}
 
-			$url = $this->endpoint_url( $resource, $since, $page + 1 );
+			$url = $this->endpoint_url( $resource, $since, $page + 1, $endpoint );
 		}
+
+		$this->fetched[ $key ] = $records;
 
 		return $records;
 	}
@@ -236,20 +282,17 @@ final class Client {
 	 * @param string      $resource Resource key.
 	 * @param string|null $since    MySQL datetime for the incremental filter.
 	 * @param int         $page     Page number, starting at 1.
+	 * @param string|null $endpoint Endpoint path, when it is not the resource's
+	 *                              own one.
 	 */
-	public function endpoint_url( string $resource, ?string $since, int $page ): string {
-		$args = $this->auth->query_args( Settings::api_token() );
+	public function endpoint_url( string $resource, ?string $since, int $page, ?string $endpoint = null ): string {
+		$args        = $this->auth->query_args( Settings::api_token() );
+		$since_param = trim( (string) Settings::get( 'since_param', 'filter[updated_at][gt]' ) );
 
-		$per_page_param = trim( (string) Settings::get( 'per_page_param', 'per_page' ) );
-		$page_param     = trim( (string) Settings::get( 'page_param', 'page' ) );
-		$since_param    = trim( (string) Settings::get( 'since_param', 'modified_since' ) );
+		$args = array_merge( $args, $this->paging_args( $page ) );
 
-		if ( '' !== $per_page_param ) {
-			$args[ $per_page_param ] = (string) $this->per_page();
-		}
-
-		if ( '' !== $page_param && $page > 1 ) {
-			$args[ $page_param ] = (string) $page;
+		if ( Settings::get( 'public_only', true ) ) {
+			$args = array_merge( $args, Definition::public_filters( $resource ) );
 		}
 
 		if ( null !== $since && '' !== $since_param ) {
@@ -265,17 +308,104 @@ final class Client {
 		 */
 		$args = (array) apply_filters( 'kurabu_wp_sync_query_args', $args, $resource, $since );
 
-		$url = $this->base_url() . '/' . ltrim( FieldMap::endpoint( $resource ), '/' );
+		$path = null === $endpoint ? FieldMap::endpoint( $resource ) : $endpoint;
+		$url  = $this->base_url() . '/' . ltrim( $path, '/' );
 
 		// add_query_arg() encodes the values itself.
 		return $args ? add_query_arg( $args, $url ) : $url;
 	}
 
 	/**
+	 * The query arguments that ask for one page.
+	 *
+	 * KURABU counts in records skipped, not in pages. An API that pages the
+	 * other way is served by switching the mode in the settings.
+	 *
+	 * @param int $page Page number, starting at 1.
+	 *
+	 * @return array<string, string>
+	 */
+	private function paging_args( int $page ): array {
+		$per_page = $this->per_page();
+		$args     = array();
+
+		if ( 'page' === (string) Settings::get( 'paging_mode', 'offset' ) ) {
+			$per_page_param = trim( (string) Settings::get( 'per_page_param', 'per_page' ) );
+			$page_param     = trim( (string) Settings::get( 'page_param', 'page' ) );
+
+			if ( '' !== $per_page_param ) {
+				$args[ $per_page_param ] = (string) $per_page;
+			}
+
+			if ( '' !== $page_param && $page > 1 ) {
+				$args[ $page_param ] = (string) $page;
+			}
+
+			return $args;
+		}
+
+		$limit_param  = trim( (string) Settings::get( 'limit_param', 'limit' ) );
+		$offset_param = trim( (string) Settings::get( 'offset_param', 'offset' ) );
+
+		if ( '' !== $limit_param ) {
+			$args[ $limit_param ] = (string) $per_page;
+		}
+
+		if ( '' !== $offset_param && $page > 1 ) {
+			$args[ $offset_param ] = (string) ( ( $page - 1 ) * $per_page );
+		}
+
+		return $args;
+	}
+
+	/**
 	 * The API base URL without a trailing slash.
+	 *
+	 * A base URL that is only the club's host gets the documented API path, so
+	 * both `https://verein.kurabu.com` and the full URL work.
 	 */
 	private function base_url(): string {
-		return rtrim( Settings::api_base_url(), '/' );
+		$url  = rtrim( Settings::api_base_url(), '/' );
+		$path = (string) wp_parse_url( $url, PHP_URL_PATH );
+
+		if ( '' === $path ) {
+			$url .= self::DEFAULT_API_PATH;
+		}
+
+		return $url;
+	}
+
+	/**
+	 * How many records the API says there are in total, when it says so.
+	 *
+	 * @param array<int|string, mixed> $decoded Decoded response body.
+	 */
+	private function total( array $decoded ): ?int {
+		$paths = array(
+			array( 'meta', 'pagination', 'total' ),
+			array( 'meta', 'total' ),
+			array( 'pagination', 'total' ),
+			array( 'total' ),
+		);
+
+		foreach ( $paths as $path ) {
+			$value = $decoded;
+
+			foreach ( $path as $segment ) {
+				if ( ! is_array( $value ) || ! isset( $value[ $segment ] ) ) {
+					$value = null;
+					break;
+				}
+
+				$value = $value[ $segment ];
+			}
+
+			if ( is_numeric( $value ) ) {
+				return (int) $value;
+			}
+		}
+
+		return null;
 	}
 
 	/**
@@ -297,7 +427,8 @@ final class Client {
 			$timestamp = time();
 		}
 
-		return gmdate( 'c', $timestamp );
+		// The documented shape is 2026-01-01T00:00:00Z, in UTC.
+		return gmdate( 'Y-m-d\TH:i:s\Z', $timestamp );
 	}
 
 	/**

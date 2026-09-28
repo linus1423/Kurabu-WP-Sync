@@ -75,12 +75,21 @@ final class Settings {
 			),
 			'log_retention_days'  => 30,
 
-			// How the resource endpoints are queried.
+			// How the resource endpoints are queried. The defaults are what
+			// the KURABU public API documents: records skipped instead of page
+			// numbers, and a "changed since" filter in bracket syntax.
 			'incremental'         => true,
-			'since_param'         => 'modified_since',
+			'since_param'         => 'filter[updated_at][gt]',
+			'paging_mode'         => 'offset',
+			'limit_param'         => 'limit',
+			'offset_param'        => 'offset',
 			'page_param'          => 'page',
 			'per_page_param'      => 'per_page',
 			'per_page'            => 100,
+			'public_only'         => true,
+			// How a training is told apart from a one-off event, see
+			// Sync\Mapping\CalendarEvent.
+			'training_rule'       => 'team_recurring',
 
 			// Where news are written.
 			'news_post_type'      => 'post',
@@ -88,8 +97,9 @@ final class Settings {
 			'news_category'       => 0,
 			'news_author'         => 0,
 
-			// Where events are written.
-			'calendar_target'     => '',
+			// Where events are written. The website of the TV 1848 Coburg runs
+			// The Events Calendar.
+			'calendar_target'     => 'the_events_calendar',
 			'event_post_type'     => '',
 			'event_meta_start'    => '_kurabu_event_start',
 			'event_meta_end'      => '_kurabu_event_end',

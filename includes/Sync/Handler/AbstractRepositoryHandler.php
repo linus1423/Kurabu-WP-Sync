@@ -25,6 +25,11 @@ defined( 'ABSPATH' ) || exit;
  * an unchanged record does not touch the row. Records KURABU no longer lists
  * are pruned, but only after a complete run: an incremental run does not know
  * the full list and must never delete.
+ *
+ * One KURABU endpoint feeds more than one resource, so a handler can say which
+ * records of a response are its own (accepts()) and turn one record into
+ * several rows (expand()) — a training on Monday and Wednesday is one event in
+ * KURABU and two training times here.
  */
 abstract class AbstractRepositoryHandler implements Handler {
 
@@ -56,6 +61,10 @@ abstract class AbstractRepositoryHandler implements Handler {
 		$resource = $this->resource();
 		$records  = $client->fetch( $resource, $since );
 
+		foreach ( Definition::extra_endpoints( $resource ) as $endpoint ) {
+			$records = array_merge( $records, $client->fetch( $resource, $since, $endpoint ) );
+		}
+
 		$repository = $this->repository();
 		$fields     = Definition::fields( $resource );
 		$written    = 0;
@@ -63,49 +72,22 @@ abstract class AbstractRepositoryHandler implements Handler {
 		$seen       = array();
 
 		foreach ( $records as $record ) {
-			if ( ! is_array( $record ) ) {
+			if ( ! is_array( $record ) || ! $this->accepts( $record ) ) {
+				// A response may hold records of another resource as well.
 				$skipped++;
 				continue;
 			}
 
-			$mapped    = RecordMapper::map( $resource, $record );
-			$kurabu_id = isset( $mapped['kurabu_id'] ) ? (string) $mapped['kurabu_id'] : '';
+			foreach ( $this->expand( $record ) as $row ) {
+				$kurabu_id = $this->store( $row, $record, $resource, $fields, $repository, $logger );
 
-			if ( '' === $kurabu_id ) {
-				$skipped++;
+				if ( '' === $kurabu_id ) {
+					$skipped++;
+					continue;
+				}
 
-				$logger->warning(
-					__( 'Ein Datensatz ohne KURABU-ID wurde übersprungen.', 'kurabu-wp-sync' ),
-					$resource,
-					array( 'record_keys' => array_slice( array_map( 'strval', array_keys( $record ) ), 0, 20 ) )
-				);
-
-				continue;
-			}
-
-			$data = $this->to_columns( $mapped, $fields );
-
-			if ( '' === (string) ( $data['slug'] ?? '' ) && isset( $data['name'] ) ) {
-				$data['slug'] = sanitize_title( (string) $data['name'] );
-			}
-
-			$data['payload'] = $record;
-			$data            = $this->prepare( $data, $record );
-
-			if ( $repository->upsert( $kurabu_id, $data ) > 0 ) {
 				$written++;
 				$seen[] = $kurabu_id;
-			} else {
-				$skipped++;
-
-				$logger->warning(
-					sprintf(
-						/* translators: %s: KURABU id. */
-						__( 'Datensatz %s konnte nicht gespeichert werden.', 'kurabu-wp-sync' ),
-						$kurabu_id
-					),
-					$resource
-				);
 			}
 		}
 
@@ -120,10 +102,32 @@ abstract class AbstractRepositoryHandler implements Handler {
 	}
 
 	/**
+	 * Whether a record of the response belongs to this resource.
+	 *
+	 * @param array<string|int, mixed> $record Raw KURABU record.
+	 */
+	protected function accepts( array $record ): bool {
+		unset( $record );
+
+		return true;
+	}
+
+	/**
+	 * The rows one record turns into, each in KURABU's own field names.
+	 *
+	 * @param array<string|int, mixed> $record Raw KURABU record.
+	 *
+	 * @return array<int, array<string|int, mixed>>
+	 */
+	protected function expand( array $record ): array {
+		return array( $record );
+	}
+
+	/**
 	 * Last chance to adjust the column values before they are written.
 	 *
 	 * @param array<string, mixed>     $data   Column values.
-	 * @param array<string|int, mixed> $record Raw KURABU record.
+	 * @param array<string|int, mixed> $record Raw KURABU record the row came from.
 	 *
 	 * @return array<string, mixed>
 	 */
@@ -131,6 +135,64 @@ abstract class AbstractRepositoryHandler implements Handler {
 		unset( $record );
 
 		return $data;
+	}
+
+	/**
+	 * Maps one row and writes it.
+	 *
+	 * @param array<string|int, mixed>                                                $row        Row as KURABU names it.
+	 * @param array<string|int, mixed>                                                $record     The record the row came from.
+	 * @param string                                                                  $resource   Resource key.
+	 * @param array<string, array{label: string, type: string, candidates: string[]}> $fields     Field definitions.
+	 * @param AbstractRepository                                                      $repository Target repository.
+	 * @param Logger                                                                  $logger     Logger of the current run.
+	 *
+	 * @return string The stored KURABU id, or an empty string when nothing was written.
+	 */
+	private function store(
+		array $row,
+		array $record,
+		string $resource,
+		array $fields,
+		AbstractRepository $repository,
+		Logger $logger
+	): string {
+		$mapped    = RecordMapper::map( $resource, $row );
+		$kurabu_id = isset( $mapped['kurabu_id'] ) ? (string) $mapped['kurabu_id'] : '';
+
+		if ( '' === $kurabu_id ) {
+			$logger->warning(
+				__( 'Ein Datensatz ohne KURABU-ID wurde übersprungen.', 'kurabu-wp-sync' ),
+				$resource,
+				array( 'record_keys' => array_slice( array_map( 'strval', array_keys( $row ) ), 0, 20 ) )
+			);
+
+			return '';
+		}
+
+		$data = $this->to_columns( $mapped, $fields );
+
+		if ( '' === (string) ( $data['slug'] ?? '' ) && isset( $data['name'] ) ) {
+			$data['slug'] = sanitize_title( (string) $data['name'] );
+		}
+
+		$data['payload'] = $row;
+		$data            = $this->prepare( $data, $record );
+
+		if ( $repository->upsert( $kurabu_id, $data ) > 0 ) {
+			return $kurabu_id;
+		}
+
+		$logger->warning(
+			sprintf(
+				/* translators: %s: KURABU id. */
+				__( 'Datensatz %s konnte nicht gespeichert werden.', 'kurabu-wp-sync' ),
+				$kurabu_id
+			),
+			$resource
+		);
+
+		return '';
 	}
 
 	/**

@@ -86,7 +86,8 @@ Die Schicht ist von außen nach innen gebaut:
 | `Client` | kennt Endpunkte, Paginierung und das Antwort-Envelope und liefert rohe KURABU-Datensätze. Kennt die Datenbank nicht. |
 | `Mapping\Definition` | die einzige Stelle, die weiß, wie KURABU seine Felder benennt: je Zielfeld ein Typ und mehrere Kandidatennamen. |
 | `Mapping\FieldMap` | im Backend gesetzte Endpunkte und Feldnamen; sie gewinnen über die Kandidaten. |
-| `Mapping\RecordMapper` | liest die Felder aus einem Datensatz und normalisiert sie (Datum, Uhrzeit, Wochentag, verschachtelte Werte über `location.name`). |
+| `Mapping\RecordMapper` | liest die Felder aus einem Datensatz und normalisiert sie (Datum, Uhrzeit, Wochentag, verschachtelte Werte über `address.city`). |
+| `Mapping\CalendarEvent` | die einzige Stelle, die die Form eines KURABU-Kalendertermins kennt: Start aus Datum plus Uhrzeit, Wochentage aus dem `rrule`, und ob ein Termin ein Training ist. |
 | `Handler\Handler` | ein Handler je Datenart. Ein Fehler bleibt dadurch lokal. |
 | `Calendar\CalendarAdapter` | schreibt Events in den Kalender, den die Website einsetzt. |
 | `Engine` | plant, sperrt, protokolliert und fasst den Lauf zusammen. |
@@ -110,13 +111,22 @@ Dabei gilt:
   nicht und darf deshalb nichts löschen; deswegen läuft mindestens einmal
   täglich ein vollständiger Lauf.
 - `Lock` verhindert, dass sich zwei Läufe überschneiden.
+- Ein Handler kann sagen, welche Datensätze einer Antwort seine sind
+  (`accepts()`) und einen Datensatz in mehrere Zeilen aufteilen (`expand()`).
+  Beides braucht es, weil ein KURABU-Endpunkt mehrere Datenarten speist: die
+  Kalendertermine liefern Trainings, Trainingszeiten und Events.
+  `Definition::extra_endpoints()` holt umgekehrt mehrere Endpunkte in eine
+  Tabelle, damit Ort, Anlage und Raum gemeinsam im Ortsverzeichnis landen.
 
 Einstiegspunkte: die Actions `kurabu_wp_sync_booted`,
 `kurabu_wp_sync_activated` und `kurabu_wp_sync_settings_saved`.
 
-Solange die KURABU-Doku fehlt, sind Endpunkte, Auth-Methode, Paginierung und
-Feldnamen bewusst Einstellungen und keine Konstanten: eine falsche Annahme wird
-im Backend unter „Mapping" korrigiert, nicht im Code.
+Endpunkte, Auth-Methode, Paginierung und Feldnamen sind bewusst Einstellungen
+und keine Konstanten: eine falsche Annahme wird im Backend unter „Mapping"
+korrigiert, nicht im Code. Voreingestellt ist die öffentliche KURABU-API, deren
+Eigenheiten in [docs/kurabu-api.md](docs/kurabu-api.md) stehen — vor Arbeiten an
+`includes/Sync/` dort nachsehen, besonders wegen der Trainings, die es in KURABU
+nicht als eigene Daten gibt.
 
 ### Shortcodes (`includes/Shortcode/`)
 
@@ -205,6 +215,9 @@ Das Menü „KURABU" und seine Screens. Neue Screens werden über den Filter
 | --- | --- |
 | `kurabu_wp_sync_field_definition` | wie KURABU seine Felder benennt |
 | `kurabu_wp_sync_query_args` | Query-Parameter einer Abfrage |
+| `kurabu_wp_sync_public_filters` | welche Filter eine Abfrage auf öffentliche Daten begrenzen |
+| `kurabu_wp_sync_extra_endpoints` | weitere Endpunkte in dieselbe Tabelle holen |
+| `kurabu_wp_sync_is_training` | ob ein Kalendertermin ein Training ist |
 | `kurabu_wp_sync_handlers` | Datenarten ergänzen oder ersetzen |
 | `kurabu_wp_sync_calendar_adapters` | weitere Kalender-Plugins anbinden |
 | `kurabu_wp_sync_full_sync_interval` | Abstand zweier vollständiger Läufe |

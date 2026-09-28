@@ -19,15 +19,13 @@ Fundament, Synchronisation und Darstellung stehen.
 | Lokales Datenmodell und Repositories | vorhanden |
 | Einstellungen (API-Zugang, Intervall) | vorhanden |
 | Backend-Menü „KURABU" | vorhanden, teils Platzhalter |
-| Sync-Engine (KURABU-API, Cron) | vorhanden |
+| Sync-Engine (KURABU-API, Cron) | vorhanden, auf die KURABU-API eingestellt |
 | Shortcodes und Vorlagen-Baukasten | vorhanden |
 
-Offen ist die Anpassung an die echte KURABU-API: Endpunkte, Auth-Methode und
-Feldnamen sind Einstellungen und müssen einmal gesetzt werden, sobald die
-Dokumentation vorliegt — siehe
-[Anpassung an die KURABU-API](#anpassung-an-die-kurabu-api). Solange noch nicht
-synchronisiert wurde, sind die lokalen Tabellen leer und die Shortcodes geben
-nichts aus. Wer Vorlagen bearbeiten darf, sieht an ihrer Stelle einen Hinweis,
+Endpunkte, Auth-Methode und Feldnamen sind auf die öffentliche KURABU-API
+dieses Vereins eingestellt, siehe [docs/kurabu-api.md](docs/kurabu-api.md); zu
+setzen sind nur noch Basis-URL und Token. Solange noch nicht synchronisiert
+wurde, sind die lokalen Tabellen leer und die Shortcodes geben nichts aus. Wer Vorlagen bearbeiten darf, sieht an ihrer Stelle einen Hinweis,
 welche Kennung nicht gefunden wurde; Besucher sehen nichts.
 
 ## Synchronisierte Daten
@@ -36,6 +34,13 @@ Abteilungen/Sportarten, Teams/Trainingsgruppen, Trainings, Trainingszeiten und
 Trainingsorte liegen im lokalen Cache. News werden zu WordPress-Beiträgen,
 Events wandern in den Vereinskalender; beide werden über ihre stabile KURABU-ID
 wiedererkannt und aktualisiert statt doppelt angelegt.
+
+In KURABU heißen die Abteilungen „Kategorien", und Trainings und Trainingszeiten
+gibt es dort nicht als eigene Daten: ein Training ist ein wiederkehrender
+Kalendertermin einer Trainingsgruppe, der Wochentag steckt in seiner
+Wiederholungsregel. Das Plugin leitet die Trainingszeiten daraus ab — welche
+Termine als Training gelten, steht unter **KURABU → API-Konfiguration**.
+Einzelheiten in [docs/kurabu-api.md](docs/kurabu-api.md).
 
 ## Synchronisation
 
@@ -58,11 +63,16 @@ Datenart, die übrigen laufen weiter. Was passiert ist, steht unter
 
 ### Anpassung an die KURABU-API
 
-Die API-Dokumentation liegt noch nicht vor. Deshalb sind Endpunkte,
-Auth-Methode, Paginierung und Feldnamen Einstellungen und keine festen Werte:
+Voreingestellt ist die öffentliche KURABU-API: Basis-URL
+`https://<verein>.kurabu.com/api/public/v1`, ein Bearer-Token je Verein aus dem
+KURABU-Adminbereich (*Einstellungen → Inhalte & APIs*), Blättern über `limit`
+und `offset`, „geändert seit" über `filter[updated_at][gt]`. Endpunkte,
+Auth-Methode, Paginierung und Feldnamen bleiben trotzdem Einstellungen, damit
+eine Änderung der API keine neue Version des Plugins braucht:
 
 - **API-Konfiguration** wählt die Auth-Methode (Bearer-Token, API-Key im Header
-  oder als Query-Parameter, Basic Auth).
+  oder als Query-Parameter, Basic Auth), ob nur öffentliche Daten übernommen
+  werden und woran ein Training zu erkennen ist.
 - **Mapping** setzt je Datenart den Endpunkt-Pfad und, wo nötig, den exakten
   KURABU-Feldnamen je Feld. Ohne Angabe werden mehrere übliche Schreibweisen
   der Reihe nach probiert; ein Punkt greift in verschachtelte Werte, etwa
@@ -70,14 +80,16 @@ Auth-Methode, Paginierung und Feldnamen Einstellungen und keine festen Werte:
 - **Verbindung testen** auf der Seite *Synchronisation* ruft einen Endpunkt
   einmal auf und zeigt die gelieferten Feldnamen. Damit lässt sich das Mapping
   ohne Raten einstellen.
-- **Kalenderintegration** wählt, wohin die Events geschrieben werden: The Events
-  Calendar oder ein frei wählbarer Beitragstyp mit benannten Custom Fields.
+- **Kalenderintegration** wählt, wohin die Events geschrieben werden:
+  voreingestellt ist The Events Calendar, den diese Website einsetzt;
+  alternativ ein frei wählbarer Beitragstyp mit benannten Custom Fields.
 
 ## Installation
 
 1. Das Verzeichnis nach `wp-content/plugins/kurabu-wp-sync/` kopieren.
 2. Das Plugin im Backend aktivieren. Dabei werden die Tabellen angelegt.
-3. Unter **KURABU → API-Konfiguration** Basis-URL, Token und Intervall setzen.
+3. Unter **KURABU → API-Konfiguration** Basis-URL
+   (`https://<verein>.kurabu.com/api/public/v1`), Token und Intervall setzen.
 
 Der API-Token kann statt im Backend auch in der `wp-config.php` hinterlegt
 werden, dann hat die Konstante Vorrang:
