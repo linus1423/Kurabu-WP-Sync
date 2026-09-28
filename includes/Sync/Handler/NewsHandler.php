@@ -57,7 +57,7 @@ final class NewsHandler implements Handler {
 		$skipped   = 0;
 
 		foreach ( $records as $record ) {
-			if ( ! is_array( $record ) ) {
+			if ( ! is_array( $record ) || ! $this->is_public( $record ) ) {
 				$skipped++;
 				continue;
 			}
@@ -235,6 +235,28 @@ final class NewsHandler implements Handler {
 		$post_type = (string) Settings::get( 'news_post_type', 'post' );
 
 		return post_type_exists( $post_type ) ? $post_type : 'post';
+	}
+
+	/**
+	 * Whether an article may appear on a public website.
+	 *
+	 * KURABU marks an article visible to members only with an INTERNAL
+	 * visibility, and that one has no API filter, so it is dropped here rather
+	 * than published by accident. A site that syncs internal content as well
+	 * switches "Nur öffentliche Daten" off.
+	 *
+	 * @param array<string|int, mixed> $record Raw KURABU record.
+	 */
+	private function is_public( array $record ): bool {
+		if ( ! Settings::get( 'public_only', true ) ) {
+			return true;
+		}
+
+		$visibility = isset( $record['visibility'] ) && is_scalar( $record['visibility'] )
+			? strtoupper( trim( (string) $record['visibility'] ) )
+			: '';
+
+		return '' === $visibility || 'PUBLIC' === $visibility;
 	}
 
 	/**

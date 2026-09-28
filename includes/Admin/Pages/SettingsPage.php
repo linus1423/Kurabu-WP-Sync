@@ -12,6 +12,7 @@ namespace Kurabu\WPSync\Admin\Pages;
 use Kurabu\WPSync\Plugin;
 use Kurabu\WPSync\Support\Settings;
 use Kurabu\WPSync\Sync\Auth\AuthenticatorFactory;
+use Kurabu\WPSync\Sync\Mapping\CalendarEvent;
 
 defined( 'ABSPATH' ) || exit;
 
@@ -53,7 +54,13 @@ final class SettingsPage extends AbstractPage {
 			'auth_method'     => sanitize_key( wp_unslash( $_POST['auth_method'] ?? 'bearer' ) ),
 			'auth_parameter'  => sanitize_text_field( wp_unslash( $_POST['auth_parameter'] ?? '' ) ),
 			'request_timeout' => max( 5, min( 120, (int) ( $_POST['request_timeout'] ?? 20 ) ) ),
+			'public_only'     => isset( $_POST['public_only'] ),
+			'training_rule'   => sanitize_key( wp_unslash( $_POST['training_rule'] ?? CalendarEvent::RULE_TEAM_RECURRING ) ),
 		);
+
+		if ( ! in_array( (string) $values['training_rule'], CalendarEvent::rules(), true ) ) {
+			$values['training_rule'] = CalendarEvent::RULE_TEAM_RECURRING;
+		}
 
 		if ( ! isset( Settings::INTERVALS[ $values['sync_interval'] ] ) ) {
 			$values['sync_interval'] = '1h';
@@ -99,11 +106,11 @@ final class SettingsPage extends AbstractPage {
 
 		printf(
 			'<tr><th scope="row"><label for="api_base_url">%s</label></th><td>'
-			. '<input name="api_base_url" id="api_base_url" type="url" class="regular-text" value="%s" placeholder="https://api.kurabu.de">'
+			. '<input name="api_base_url" id="api_base_url" type="url" class="regular-text" value="%s" placeholder="https://verein.kurabu.com/api/public/v1">'
 			. '<p class="description">%s</p></td></tr>',
 			esc_html__( 'API-Basis-URL', 'kurabu-wp-sync' ),
 			esc_attr( (string) $settings['api_base_url'] ),
-			esc_html__( 'Basis-URL der KURABU-API.', 'kurabu-wp-sync' )
+			esc_html__( 'Die Adresse des Vereins bei KURABU. Ohne Pfad wird /api/public/v1 ergänzt.', 'kurabu-wp-sync' )
 		);
 
 		if ( $token_constant ) {
@@ -183,6 +190,31 @@ final class SettingsPage extends AbstractPage {
 			checked( (bool) $settings['sync_enabled'], true, false ),
 			esc_html__( 'Regelmäßig im Hintergrund synchronisieren', 'kurabu-wp-sync' )
 		);
+
+		printf(
+			'<tr><th scope="row">%s</th><td><label><input type="checkbox" name="public_only" %s> %s</label>'
+			. '<p class="description">%s</p></td></tr>',
+			esc_html__( 'Nur öffentliche Daten', 'kurabu-wp-sync' ),
+			checked( (bool) $settings['public_only'], true, false ),
+			esc_html__( 'Nicht veröffentlichte und interne Daten übergehen', 'kurabu-wp-sync' ),
+			esc_html__( 'Empfohlen: die Website zeigt damit nur, was in KURABU öffentlich sichtbar ist.', 'kurabu-wp-sync' )
+		);
+
+		echo '<tr><th scope="row"><label for="training_rule">' . esc_html__( 'Trainings erkennen an', 'kurabu-wp-sync' ) . '</label></th><td>';
+		echo '<select name="training_rule" id="training_rule">';
+
+		foreach ( CalendarEvent::rule_labels() as $rule => $label ) {
+			printf(
+				'<option value="%s" %s>%s</option>',
+				esc_attr( $rule ),
+				selected( $settings['training_rule'], $rule, false ),
+				esc_html( $label )
+			);
+		}
+
+		echo '</select><p class="description">'
+			. esc_html__( 'KURABU kennt keine eigenen Trainings: Trainingszeiten stecken in den Kalenderterminen. Alles, was hier nicht als Training gilt, wird als Event in den Kalender übernommen.', 'kurabu-wp-sync' )
+			. '</p></td></tr>';
 
 		echo '</tbody></table>';
 

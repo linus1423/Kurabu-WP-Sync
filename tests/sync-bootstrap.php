@@ -547,6 +547,16 @@ namespace {
 		return trim( (string) $slug, '-' );
 	}
 
+	/**
+	 * @param string $url       URL to split.
+	 * @param int    $component One of the PHP_URL_* constants.
+	 *
+	 * @return mixed
+	 */
+	function wp_parse_url( string $url, int $component = -1 ) {
+		return parse_url( $url, $component );
+	}
+
 	function wp_generate_uuid4(): string {
 		return sprintf( '%04x%04x-test-run', random_int( 0, 0xffff ), random_int( 0, 0xffff ) );
 	}

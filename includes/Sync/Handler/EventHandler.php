@@ -13,6 +13,7 @@ use Kurabu\WPSync\Database\ObjectMap;
 use Kurabu\WPSync\Support\Logger;
 use Kurabu\WPSync\Sync\Calendar\CalendarRegistry;
 use Kurabu\WPSync\Sync\Client;
+use Kurabu\WPSync\Sync\Mapping\CalendarEvent;
 use Kurabu\WPSync\Sync\Mapping\RecordMapper;
 use Kurabu\WPSync\Sync\Resource;
 use Kurabu\WPSync\Sync\ResourceResult;
@@ -27,6 +28,9 @@ defined( 'ABSPATH' ) || exit;
  * ObjectMap is what keeps a second run from creating duplicates. Without a
  * configured calendar the resource is skipped instead of failing: the rest of
  * the run is unaffected and the backend says what is missing.
+ *
+ * The recurring team events of the same endpoint are the trainings and stay out
+ * of the calendar; they are cached as Trainings and Trainingszeiten instead.
  */
 final class EventHandler implements Handler {
 
@@ -57,12 +61,13 @@ final class EventHandler implements Handler {
 		$skipped = 0;
 
 		foreach ( $records as $record ) {
-			if ( ! is_array( $record ) ) {
+			if ( ! is_array( $record ) || CalendarEvent::is_training( $record ) || ! CalendarEvent::is_public( $record ) ) {
+				// A training belongs in the training cache, not in the calendar.
 				$skipped++;
 				continue;
 			}
 
-			$mapped    = RecordMapper::map( $this->resource(), $record );
+			$mapped    = $this->with_times( RecordMapper::map( $this->resource(), $record ), $record );
 			$kurabu_id = (string) ( $mapped['kurabu_id'] ?? '' );
 
 			if ( '' === $kurabu_id ) {
@@ -120,5 +125,31 @@ final class EventHandler implements Handler {
 		}
 
 		return ResourceResult::success( $this->resource(), count( $records ), $written, 0, $skipped, null !== $since );
+	}
+
+	/**
+	 * Assembles start and end out of the KURABU date and time fields.
+	 *
+	 * KURABU keeps `start_date` and `start_time` apart, so the mapped datetime
+	 * would otherwise be midnight of the right day.
+	 *
+	 * @param array<string, mixed>     $mapped Mapped values.
+	 * @param array<string|int, mixed> $record Raw KURABU record.
+	 *
+	 * @return array<string, mixed>
+	 */
+	private function with_times( array $mapped, array $record ): array {
+		$start = CalendarEvent::start( $record );
+		$end   = CalendarEvent::end( $record );
+
+		if ( '' !== $start ) {
+			$mapped['start'] = $start;
+		}
+
+		if ( '' !== $end ) {
+			$mapped['end'] = $end;
+		}
+
+		return $mapped;
 	}
 }

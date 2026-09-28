@@ -134,6 +134,9 @@ final class Engine {
 			return $report;
 		}
 
+		// Records are remembered within a run, not across two of them.
+		$this->client()->forget();
+
 		$logger->info(
 			sprintf(
 				/* translators: %s: comma separated resource keys. */
